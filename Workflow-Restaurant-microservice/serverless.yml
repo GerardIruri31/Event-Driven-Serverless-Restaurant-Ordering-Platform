@@ -1,0 +1,168 @@
+org: faridaquino
+service: pedidos-universidad
+
+provider:
+  name: aws
+  runtime: python3.13
+  timeout: 30
+  stage: dev
+  httpApi:
+    cors: true
+  iam:
+    role: arn:aws:iam::058264221898:role/LabRole
+  region: us-east-1
+
+  environment:
+    TABLA_PEDIDOS: Pedidos
+    TABLA_COCINA: ${self:service}-cocina-${sls:stage}
+    TABLA_DESPACHADOR: ${self:service}-despachador-${sls:stage}
+    TABLA_DELIVERY: ${self:service}-delivery-${sls:stage}
+    STATE_MACHINE_ARN: "arn:aws:states:us-east-1:738683684819:stateMachine:WorkflowRestaurante"
+
+plugins:
+  # plugin de step functions lo puedes re-activar cuando definas la máquina de estados
+  # - serverless-step-functions
+
+functions:
+  pagadoACocina:
+    handler: estado_pedidos.pagado_a_cocina
+    reservedConcurrency: 3 # <= máximo 3 pedidos en este paso
+    events:
+      - httpApi:
+          path: /pedidos/{uuid_pedido}/pagado-a-cocina
+          method: post
+      - sqs: 
+          # CORRECCIÓN 2: Referencia externa a la cola creada por el Servicio A
+          # No puedes usar GetAtt porque la cola no está en este archivo.
+          arn: arn:aws:sqs:${aws:region}:${aws:accountId}:YAPAGADOS.fifo
+          batchSize: 1
+
+  cocinaAEmpaquetamiento:
+    handler: estado_pedidos.cocina_a_empaquetamiento
+    reservedConcurrency: 3
+    events:
+      - httpApi:
+          path: /pedidos/{uuid_pedido}/cocina-a-empaquetamiento
+          method: post
+      - sqs:
+          arn:
+            Fn::GetAtt: [PEDIDOSYACOCINADOSQueue, Arn]
+          batchSize: 1
+
+  empaquetamientoADelivery:
+    handler: estado_pedidos.empaquetamiento_a_delivery
+    reservedConcurrency: 3
+    events:
+      - httpApi:
+          path: /pedidos/{uuid_pedido}/empaquetamiento-a-delivery
+          method: post
+      - sqs:
+          arn:
+            Fn::GetAtt: [PEDIDOSLISTOSPARARECOGERQueue, Arn]
+          batchSize: 1
+
+  deliveryAEntregado:
+    handler: estado_pedidos.delivery_a_entregado
+    events:
+      - httpApi:
+          path: /pedidos/{uuid_pedido}/delivery-a-entregado
+          method: post
+
+  confirmarPaso:
+    handler: estado_pedidos.confirmar_paso
+    events:
+      - httpApi:
+          path: /workflow/confirmar
+          method: post
+
+  obtenerPedido:
+    handler: estado_pedidos.obtener_pedido
+    events:
+      - httpApi:
+          path: /pedidos/{uuid_pedido}
+          method: get
+
+  listarPedidos:
+    handler: estado_pedidos.listar_pedidos
+    events:
+      - httpApi:
+          path: /pedidos
+          method: get
+          
+  iniciarFlujo:
+    handler: estado_pedidos.iniciar_proceso_step_function
+    events:
+      - httpApi:
+          path: /workflow/iniciar
+          method: post
+
+resources:
+  Resources:
+    CocinaTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-cocina-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH # PK
+          - AttributeName: uuid
+            KeyType: RANGE # SK
+
+    DespachadorTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-despachador-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH # PK
+          - AttributeName: uuid
+            KeyType: RANGE # SK
+
+    DeliveryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:service}-delivery-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: uuid
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH # PK
+          - AttributeName: uuid
+            KeyType: RANGE # SK
+
+    # =============================
+    # COLAS SQS POR PASO
+    # =============================
+
+    PEDIDOSYACOCINADOSQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: PEDIDOSYACOCINADOS.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        VisibilityTimeout: 60
+
+    PEDIDOSLISTOSPARARECOGERQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: PEDIDOSLISTOSPARARECOGER.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        VisibilityTimeout: 60
+

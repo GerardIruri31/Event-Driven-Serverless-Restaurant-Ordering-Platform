@@ -1,0 +1,108 @@
+org: alessandromonzon
+service: api-usuarios-productos
+
+provider:
+  name: aws
+  runtime: python3.8
+  memorySize: 1024
+  timeout: 20
+  iam:
+    role: arn:aws:iam::186010442777:role/LabRole
+  environment:
+    DYNAMODB_TABLE_USUARIOS: ${sls:stage}-t_usuarios
+    DYNAMODB_TABLE_TOKENS: ${sls:stage}-t_tokens_acceso
+    DYNAMODB_TABLE_PRODUCTOS: ${sls:stage}-t_productos
+    BUCKET_IMAGENES_PRODUCTOS: ${sls:stage}-productos-img
+
+functions:
+
+  registerUser:
+    handler: register_user.register_user
+    events:
+      - http:
+          path: /users/register
+          method: post
+          cors: true
+
+  loginUser:
+    handler: login_user.login_user
+    events:
+      - http:
+          path: /users/login
+          method: post
+          cors: true
+
+  validateToken:
+    handler: validate_token.validate_token
+    events:
+      - http:
+          path: /users/validate-token
+          method: get
+          cors: true
+
+  crearProducto:
+    handler: crear_producto.crear_producto
+    events:
+      - http:
+          path: /productos/crear
+          method: post
+          cors: true
+
+  listarProductos:
+    handler: listar_productos.listar_productos
+    events:
+      - http:
+          path: /productos/listar
+          method: get
+          cors: true
+
+resources:
+  Resources:
+
+    UsuariosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_USUARIOS}
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH
+          - AttributeName: user_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    TokensTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_TOKENS}
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: token_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH
+          - AttributeName: token_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    ProductosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.DYNAMODB_TABLE_PRODUCTOS}
+        AttributeDefinitions:
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: product_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
+            KeyType: HASH
+          - AttributeName: product_id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
